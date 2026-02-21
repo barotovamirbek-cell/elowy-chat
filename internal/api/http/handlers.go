@@ -40,7 +40,12 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := repository.UserRepository{DB: database.DB}
-	user := models.User{Username: req.Username, Password: string(hash)}
+	user := models.User{
+    Username:    req.Username,
+    Password:    string(hash),
+    DisplayName: req.DisplayName,
+    UserTag:     req.UserTag,
+}
 	if err := repo.CreateUser(user); err != nil {
 		http.Error(w, "Пользователь уже существует", http.StatusConflict)
 		return
@@ -97,17 +102,11 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Не авторизован", http.StatusUnauthorized)
 		return
 	}
-	rows, err := database.DB.Query(`SELECT id, username FROM users WHERE id != $1`, userID)
-	if err != nil {
-		http.Error(w, "Ошибка БД", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-	var users []models.User
-	for rows.Next() {
-		var u models.User
-		rows.Scan(&u.ID, &u.Username)
-		users = append(users, u)
+	tag := r.URL.Query().Get("tag")
+	repo := repository.UserRepository{DB: database.DB}
+	users, err := repo.SearchByTag(tag, userID)
+	if err != nil || users == nil {
+		users = []models.User{}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(users)
