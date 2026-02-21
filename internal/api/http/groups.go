@@ -269,3 +269,97 @@ func AddGroupMember(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(map[string]string{"message": "Добавлен"})
 }
+
+// =======================
+// REMOVE MEMBER
+// =======================
+func RemoveGroupMember(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+
+	var body struct {
+		GroupID int `json:"group_id"`
+		UserID  int `json:"user_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Неверный формат", http.StatusBadRequest)
+		return
+	}
+
+	// Проверяем роль текущего пользователя
+	var role string
+	err = database.DB.QueryRow(`
+		SELECT role FROM group_members
+		WHERE group_id=$1 AND user_id=$2
+	`, body.GroupID, userID).Scan(&role)
+
+	if err != nil || (role != "owner" && role != "admin") {
+		http.Error(w, "Нет прав", http.StatusForbidden)
+		return
+	}
+
+	_, err = database.DB.Exec(`
+		DELETE FROM group_members
+		WHERE group_id=$1 AND user_id=$2
+	`, body.GroupID, body.UserID)
+
+	if err != nil {
+		http.Error(w, "Ошибка удаления", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"message": "Удалён"})
+}
+
+
+// =======================
+// UPDATE GROUP
+// =======================
+func UpdateGroup(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+
+	var body struct {
+		GroupID     int    `json:"group_id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		AvatarURL   string `json:"avatar_url"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Неверный формат", http.StatusBadRequest)
+		return
+	}
+
+	// Проверяем роль
+	var role string
+	err = database.DB.QueryRow(`
+		SELECT role FROM group_members
+		WHERE group_id=$1 AND user_id=$2
+	`, body.GroupID, userID).Scan(&role)
+
+	if err != nil || (role != "owner" && role != "admin") {
+		http.Error(w, "Нет прав", http.StatusForbidden)
+		return
+	}
+
+	_, err = database.DB.Exec(`
+		UPDATE groups
+		SET name=$1, description=$2, avatar_url=$3
+		WHERE id=$4
+	`, body.Name, body.Description, body.AvatarURL, body.GroupID)
+
+	if err != nil {
+		http.Error(w, "Ошибка обновления", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"message": "Обновлено"})
+}
