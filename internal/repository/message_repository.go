@@ -9,9 +9,7 @@ type MessageRepository struct {
 	DB *sql.DB
 }
 
-// Создать или найти диалог между двумя пользователями
 func (r *MessageRepository) GetOrCreateConversation(userID1, userID2 int) (int, error) {
-	// Ищем существующий диалог
 	query := `
 		SELECT c.id FROM conversations c
 		JOIN conversation_members m1 ON c.id = m1.conversation_id AND m1.user_id = $1
@@ -22,8 +20,6 @@ func (r *MessageRepository) GetOrCreateConversation(userID1, userID2 int) (int, 
 	if err == nil {
 		return convID, nil
 	}
-
-	// Создаём новый диалог
 	err = r.DB.QueryRow(`INSERT INTO conversations DEFAULT VALUES RETURNING id`).Scan(&convID)
 	if err != nil {
 		return 0, err
@@ -32,21 +28,20 @@ func (r *MessageRepository) GetOrCreateConversation(userID1, userID2 int) (int, 
 	return convID, err
 }
 
-// Сохранить сообщение
 func (r *MessageRepository) SaveMessage(msg models.Message) (models.Message, error) {
 	query := `
-		INSERT INTO messages (conversation_id, sender_id, content)
-		VALUES ($1, $2, $3)
+		INSERT INTO messages (conversation_id, sender_id, content, media_url, media_type)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at`
-	err := r.DB.QueryRow(query, msg.ConversationID, msg.SenderID, msg.Content).
+	err := r.DB.QueryRow(query, msg.ConversationID, msg.SenderID, msg.Content, msg.MediaURL, msg.MediaType).
 		Scan(&msg.ID, &msg.CreatedAt)
 	return msg, err
 }
 
-// Получить сообщения диалога
 func (r *MessageRepository) GetMessages(conversationID int) ([]models.Message, error) {
 	query := `
-		SELECT m.id, m.conversation_id, m.sender_id, u.username, m.content, m.created_at
+		SELECT m.id, m.conversation_id, m.sender_id, u.username, m.content,
+			COALESCE(m.media_url,''), COALESCE(m.media_type,''), m.created_at
 		FROM messages m
 		JOIN users u ON m.sender_id = u.id
 		WHERE m.conversation_id = $1
@@ -56,17 +51,16 @@ func (r *MessageRepository) GetMessages(conversationID int) ([]models.Message, e
 		return nil, err
 	}
 	defer rows.Close()
-
 	var messages []models.Message
 	for rows.Next() {
 		var msg models.Message
-		rows.Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.SenderUsername, &msg.Content, &msg.CreatedAt)
+		rows.Scan(&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.SenderUsername,
+			&msg.Content, &msg.MediaURL, &msg.MediaType, &msg.CreatedAt)
 		messages = append(messages, msg)
 	}
 	return messages, nil
 }
 
-// Получить список диалогов пользователя
 func (r *MessageRepository) GetConversations(userID int) ([]models.Conversation, error) {
 	query := `
 		SELECT c.id,
@@ -84,7 +78,6 @@ func (r *MessageRepository) GetConversations(userID int) ([]models.Conversation,
 		return nil, err
 	}
 	defer rows.Close()
-
 	var convs []models.Conversation
 	for rows.Next() {
 		var conv models.Conversation

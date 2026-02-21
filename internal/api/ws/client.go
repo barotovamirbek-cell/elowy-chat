@@ -10,7 +10,6 @@ import (
 	"your_project/internal/repository"
 )
 
-// Client — одно подключение одного пользователя
 type Client struct {
 	UserID   int
 	Username string
@@ -29,7 +28,6 @@ func NewClient(hub *Hub, conn *websocket.Conn, userID int, username string) *Cli
 	}
 }
 
-// Читаем сообщения от пользователя
 func (c *Client) ReadPump() {
 	defer func() {
 		c.Hub.Unregister(c)
@@ -49,12 +47,13 @@ func (c *Client) ReadPump() {
 			continue
 		}
 
-		// Сохраняем сообщение в БД
 		msg := models.Message{
 			ConversationID: wsMsg.ConversationID,
 			SenderID:       c.UserID,
 			SenderUsername: c.Username,
 			Content:        wsMsg.Content,
+			MediaURL:       wsMsg.MediaURL,
+			MediaType:      wsMsg.MediaType,
 		}
 		saved, err := repo.SaveMessage(msg)
 		if err != nil {
@@ -62,17 +61,17 @@ func (c *Client) ReadPump() {
 			continue
 		}
 
-		// Отправляем сообщение получателю
 		response := models.WSMessage{
 			Type:           "message",
 			ConversationID: saved.ConversationID,
 			Content:        saved.Content,
+			MediaURL:       saved.MediaURL,
+			MediaType:      saved.MediaType,
 			SenderID:       saved.SenderID,
 			SenderUsername: saved.SenderUsername,
 		}
 		responseData, _ := json.Marshal(response)
 
-		// Найдём второго участника диалога и отправим ему
 		var otherUserID int
 		database.DB.QueryRow(`
 			SELECT user_id FROM conversation_members 
@@ -80,12 +79,10 @@ func (c *Client) ReadPump() {
 			wsMsg.ConversationID, c.UserID).Scan(&otherUserID)
 
 		c.Hub.SendToUser(otherUserID, responseData)
-		// Отправляем и себе (чтобы видеть своё сообщение)
 		c.Send <- responseData
 	}
 }
 
-// Отправляем сообщения пользователю
 func (c *Client) WritePump() {
 	defer c.Conn.Close()
 	for message := range c.Send {

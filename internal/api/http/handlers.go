@@ -22,8 +22,6 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// ---------- Register ----------
-
 func RegisterUser(w http.ResponseWriter, r *http.Request) {
 	var req models.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -41,11 +39,11 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 	}
 	repo := repository.UserRepository{DB: database.DB}
 	user := models.User{
-    Username:    req.Username,
-    Password:    string(hash),
-    DisplayName: req.DisplayName,
-    UserTag:     req.UserTag,
-}
+		Username:    req.Username,
+		Password:    string(hash),
+		DisplayName: req.DisplayName,
+		UserTag:     req.UserTag,
+	}
 	if err := repo.CreateUser(user); err != nil {
 		http.Error(w, "Пользователь уже существует", http.StatusConflict)
 		return
@@ -53,8 +51,6 @@ func RegisterUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Пользователь создан"})
 }
-
-// ---------- Login ----------
 
 func LoginUser(w http.ResponseWriter, r *http.Request) {
 	var req models.LoginRequest
@@ -82,8 +78,6 @@ func LoginUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(models.LoginResponse{Token: token, User: *user})
 }
 
-// ---------- Profile ----------
-
 func GetUserProfile(w http.ResponseWriter, r *http.Request) {
 	userID, username, err := parseJWTFromRequest(r)
 	if err != nil {
@@ -93,8 +87,6 @@ func GetUserProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"id": userID, "username": username})
 }
-
-// ---------- Пользователи ----------
 
 func GetUsers(w http.ResponseWriter, r *http.Request) {
 	userID, _, err := parseJWTFromRequest(r)
@@ -111,8 +103,6 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(users)
 }
-
-// ---------- Диалоги ----------
 
 func GetConversations(w http.ResponseWriter, r *http.Request) {
 	userID, _, err := parseJWTFromRequest(r)
@@ -153,8 +143,6 @@ func StartConversation(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]int{"conversation_id": convID})
 }
 
-// ---------- Сообщения ----------
-
 func GetMessages(w http.ResponseWriter, r *http.Request) {
 	_, _, err := parseJWTFromRequest(r)
 	if err != nil {
@@ -175,8 +163,6 @@ func GetMessages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(msgs)
 }
-
-// ---------- WebSocket ----------
 
 func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	tokenStr := r.URL.Query().Get("token")
@@ -211,7 +197,77 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go client.ReadPump()
 }
 
-// ---------- JWT helpers ----------
+func GetProfile(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+	var u models.User
+	database.DB.QueryRow(
+		`SELECT id, username, COALESCE(display_name,''), COALESCE(user_tag,''), COALESCE(bio,''), COALESCE(avatar_url,'') FROM users WHERE id=$1`,
+		userID,
+	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.UserTag, &u.Bio, &u.AvatarURL)
+	u.Password = ""
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(u)
+}
+
+func GetUserProfileByID(w http.ResponseWriter, r *http.Request) {
+	_, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+	idStr := r.URL.Query().Get("id")
+	id, _ := strconv.Atoi(idStr)
+	var u models.User
+	database.DB.QueryRow(
+		`SELECT id, username, COALESCE(display_name,''), COALESCE(user_tag,''), COALESCE(bio,''), COALESCE(avatar_url,'') FROM users WHERE id=$1`,
+		id,
+	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.UserTag, &u.Bio, &u.AvatarURL)
+	u.Password = ""
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(u)
+}
+
+func UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		DisplayName string `json:"display_name"`
+		Bio         string `json:"bio"`
+		AvatarURL   string `json:"avatar_url"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	_, err = database.DB.Exec(
+		`UPDATE users SET display_name=$1, bio=$2, avatar_url=$3 WHERE id=$4`,
+		body.DisplayName, body.Bio, body.AvatarURL, userID,
+	)
+	if err != nil {
+		http.Error(w, "Ошибка обновления", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Профиль обновлён"})
+}
+
+func GetCloudinaryConfig(w http.ResponseWriter, r *http.Request) {
+	_, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"cloud_name":    os.Getenv("CLOUDINARY_CLOUD_NAME"),
+		"api_key":       os.Getenv("CLOUDINARY_API_KEY"),
+		"upload_preset": "elowy_avatars",
+	})
+}
 
 func generateJWT(userID int, username string) (string, error) {
 	secret := os.Getenv("JWT_SECRET")
@@ -242,63 +298,4 @@ func parseJWTFromRequest(r *http.Request) (int, string, error) {
 	}
 	claims := token.Claims.(jwt.MapClaims)
 	return int(claims["user_id"].(float64)), claims["username"].(string), nil
-}
-
-func UpdateProfile(w http.ResponseWriter, r *http.Request) {
-	userID, _, err := parseJWTFromRequest(r)
-	if err != nil {
-		http.Error(w, "Не авторизован", http.StatusUnauthorized)
-		return
-	}
-
-	var body struct {
-		DisplayName string `json:"display_name"`
-		Bio         string `json:"bio"`
-		AvatarURL   string `json:"avatar_url"`
-	}
-	json.NewDecoder(r.Body).Decode(&body)
-
-	_, err = database.DB.Exec(
-		`UPDATE users SET display_name=$1, bio=$2, avatar_url=$3 WHERE id=$4`,
-		body.DisplayName, body.Bio, body.AvatarURL, userID,
-	)
-	if err != nil {
-		http.Error(w, "Ошибка обновления", http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Профиль обновлён"})
-}
-
-func GetProfile(w http.ResponseWriter, r *http.Request) {
-	userID, _, err := parseJWTFromRequest(r)
-	if err != nil {
-		http.Error(w, "Не авторизован", http.StatusUnauthorized)
-		return
-	}
-	var u models.User
-	database.DB.QueryRow(
-		`SELECT id, username, COALESCE(display_name,''), COALESCE(user_tag,''), COALESCE(bio,''), COALESCE(avatar_url,'') FROM users WHERE id=$1`,
-		userID,
-	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.UserTag, &u.Bio, &u.AvatarURL)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(u)
-}
-
-func GetCloudinarySignature(w http.ResponseWriter, r *http.Request) {
-	_, _, err := parseJWTFromRequest(r)
-	if err != nil {
-		http.Error(w, "Не авторизован", http.StatusUnauthorized)
-		return
-	}
-	cloudName := os.Getenv("CLOUDINARY_CLOUD_NAME")
-	apiKey := os.Getenv("CLOUDINARY_API_KEY")
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"cloud_name": cloudName,
-		"api_key":    apiKey,
-		"upload_preset": "elowy_avatars",
-	})
 }
