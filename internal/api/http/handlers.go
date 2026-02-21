@@ -243,3 +243,62 @@ func parseJWTFromRequest(r *http.Request) (int, string, error) {
 	claims := token.Claims.(jwt.MapClaims)
 	return int(claims["user_id"].(float64)), claims["username"].(string), nil
 }
+
+func UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+
+	var body struct {
+		DisplayName string `json:"display_name"`
+		Bio         string `json:"bio"`
+		AvatarURL   string `json:"avatar_url"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+
+	_, err = database.DB.Exec(
+		`UPDATE users SET display_name=$1, bio=$2, avatar_url=$3 WHERE id=$4`,
+		body.DisplayName, body.Bio, body.AvatarURL, userID,
+	)
+	if err != nil {
+		http.Error(w, "Ошибка обновления", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Профиль обновлён"})
+}
+
+func GetProfile(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+	var u models.User
+	database.DB.QueryRow(
+		`SELECT id, username, COALESCE(display_name,''), COALESCE(user_tag,''), COALESCE(bio,''), COALESCE(avatar_url,'') FROM users WHERE id=$1`,
+		userID,
+	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.UserTag, &u.Bio, &u.AvatarURL)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(u)
+}
+
+func GetCloudinarySignature(w http.ResponseWriter, r *http.Request) {
+	_, _, err := parseJWTFromRequest(r)
+	if err != nil {
+		http.Error(w, "Не авторизован", http.StatusUnauthorized)
+		return
+	}
+	cloudName := os.Getenv("CLOUDINARY_CLOUD_NAME")
+	apiKey := os.Getenv("CLOUDINARY_API_KEY")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"cloud_name": cloudName,
+		"api_key":    apiKey,
+		"upload_preset": "elowy_avatars",
+	})
+}

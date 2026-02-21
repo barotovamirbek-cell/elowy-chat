@@ -13,4 +13,7 @@ func RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/conversations/start", StartConversation).Methods("POST")
 	r.HandleFunc("/api/messages", GetMessages).Methods("GET")
 	r.HandleFunc("/ws", HandleWebSocket)
+     r.HandleFunc("/api/profile/update", UpdateProfile).Methods("POST")
+     r.HandleFunc("/api/profile/me", GetProfile).Methods("GET")
+     r.HandleFunc("/api/cloudinary/config", GetCloudinarySignature).Methods("GET")
 }

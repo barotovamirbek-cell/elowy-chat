@@ -6,6 +6,8 @@ type User struct {
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
 	UserTag     string `json:"user_tag"`
+	Bio         string `json:"bio"`
+	AvatarURL   string `json:"avatar_url"`
 }
 
 type RegisterRequest struct {
