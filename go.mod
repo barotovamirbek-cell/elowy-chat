@@ -1,6 +1,6 @@
 module your_project
 
-go 1.25.7
+go 1.23
 
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
