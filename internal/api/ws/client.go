@@ -1,13 +1,13 @@
 package ws
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log"
+	"time"
+	"your_project/internal/models"
 
 	"github.com/gorilla/websocket"
-	"your_project/internal/models"
-	"your_project/internal/pkg/database"
-	"your_project/internal/repository"
 )
 
 type Client struct {
@@ -16,16 +16,7 @@ type Client struct {
 	Conn     *websocket.Conn
 	Send     chan []byte
 	Hub      *Hub
-}
-
-func NewClient(hub *Hub, conn *websocket.Conn, userID int, username string) *Client {
-	return &Client{
-		UserID:   userID,
-		Username: username,
-		Conn:     conn,
-		Send:     make(chan []byte, 256),
-		Hub:      hub,
-	}
+	DB       *sql.DB
 }
 
 func (c *Client) ReadPump() {
@@ -33,101 +24,125 @@ func (c *Client) ReadPump() {
 		c.Hub.Unregister(c)
 		c.Conn.Close()
 	}()
-
-	repo := repository.MessageRepository{DB: database.DB}
+	c.Conn.SetReadLimit(1024 * 1024)
+	c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.Conn.SetPongHandler(func(string) error {
+		c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
 
 	for {
-		_, data, err := c.Conn.ReadMessage()
+		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
 			break
 		}
 
-		var wsMsg models.WSMessage
-		if err := json.Unmarshal(data, &wsMsg); err != nil {
+		var msg models.WSMessage
+		if err := json.Unmarshal(message, &msg); err != nil {
 			continue
 		}
 
-		switch wsMsg.Type {
+		switch msg.Type {
+		case "message":
+			c.handlePersonalMessage(msg)
 		case "group_message":
-			// Сохраняем групповое сообщение
-			_, err := database.DB.Exec(`
-				INSERT INTO group_messages (group_id, sender_id, content, media_url, media_type)
-				VALUES ($1, $2, $3, $4, $5)`,
-				wsMsg.GroupID, c.UserID, wsMsg.Content, wsMsg.MediaURL, wsMsg.MediaType,
-			)
-			if err != nil {
-				log.Println("Ошибка сохранения группового сообщения:", err)
-				continue
-			}
-
-			response := models.WSMessage{
-				Type:           "group_message",
-				GroupID:        wsMsg.GroupID,
-				Content:        wsMsg.Content,
-				MediaURL:       wsMsg.MediaURL,
-				MediaType:      wsMsg.MediaType,
-				SenderID:       c.UserID,
-				SenderUsername: c.Username,
-			}
-			responseData, _ := json.Marshal(response)
-
-			// Отправляем всем участникам группы
-			rows, err := database.DB.Query(
-				`SELECT user_id FROM group_members WHERE group_id = $1 AND user_id != $2`,
-				wsMsg.GroupID, c.UserID,
-			)
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var memberID int
-					rows.Scan(&memberID)
-					c.Hub.SendToUser(memberID, responseData)
-				}
-			}
-			c.Send <- responseData
-
-		default:
-			// Личное сообщение
-			msg := models.Message{
-				ConversationID: wsMsg.ConversationID,
-				SenderID:       c.UserID,
-				SenderUsername: c.Username,
-				Content:        wsMsg.Content,
-				MediaURL:       wsMsg.MediaURL,
-				MediaType:      wsMsg.MediaType,
-			}
-			saved, err := repo.SaveMessage(msg)
-			if err != nil {
-				log.Println("Ошибка сохранения сообщения:", err)
-				continue
-			}
-
-			response := models.WSMessage{
-				Type:           "message",
-				ConversationID: saved.ConversationID,
-				Content:        saved.Content,
-				MediaURL:       saved.MediaURL,
-				MediaType:      saved.MediaType,
-				SenderID:       saved.SenderID,
-				SenderUsername: saved.SenderUsername,
-			}
-			responseData, _ := json.Marshal(response)
-
-			var otherUserID int
-			database.DB.QueryRow(`
-				SELECT user_id FROM conversation_members 
-				WHERE conversation_id = $1 AND user_id != $2`,
-				wsMsg.ConversationID, c.UserID).Scan(&otherUserID)
-
-			c.Hub.SendToUser(otherUserID, responseData)
-			c.Send <- responseData
+			c.handleGroupMessage(msg)
+		case "call_offer", "call_answer", "call_reject", "call_end", "ice_candidate":
+			var signal SignalMessage
+			json.Unmarshal(message, &signal)
+			signal.From = c.UserID
+			signal.CallerName = c.Username
+			HandleSignaling(c.Hub, c, signal)
 		}
 	}
 }
 
+func (c *Client) handlePersonalMessage(msg models.WSMessage) {
+	var senderUsername string
+	c.DB.QueryRow(`SELECT username FROM users WHERE id=$1`, c.UserID).Scan(&senderUsername)
+
+	_, err := c.DB.Exec(
+		`INSERT INTO messages (conversation_id, sender_id, content, media_url, media_type) VALUES ($1, $2, $3, $4, $5)`,
+		msg.ConversationID, c.UserID, msg.Content, msg.MediaURL, msg.MediaType,
+	)
+	if err != nil {
+		log.Println("Ошибка сохранения сообщения:", err)
+		return
+	}
+
+	response := models.WSMessage{
+		Type:           "message",
+		ConversationID: msg.ConversationID,
+		Content:        msg.Content,
+		MediaURL:       msg.MediaURL,
+		MediaType:      msg.MediaType,
+		SenderID:       c.UserID,
+		SenderUsername: senderUsername,
+	}
+	data, _ := json.Marshal(response)
+
+	rows, err := c.DB.Query(
+		`SELECT user_id FROM conversation_members WHERE conversation_id=$1`,
+		msg.ConversationID,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uid int
+		rows.Scan(&uid)
+		c.Hub.SendToUser(uid, data)
+	}
+}
+
+func (c *Client) handleGroupMessage(msg models.WSMessage) {
+	var senderUsername string
+	c.DB.QueryRow(`SELECT username FROM users WHERE id=$1`, c.UserID).Scan(&senderUsername)
+
+	_, err := c.DB.Exec(
+		`INSERT INTO group_messages (group_id, sender_id, content, media_url, media_type) VALUES ($1, $2, $3, $4, $5)`,
+		msg.GroupID, c.UserID, msg.Content, msg.MediaURL, msg.MediaType,
+	)
+	if err != nil {
+		log.Println("Ошибка сохранения группового сообщения:", err)
+		return
+	}
+
+	response := models.WSMessage{
+		Type:           "group_message",
+		GroupID:        msg.GroupID,
+		Content:        msg.Content,
+		MediaURL:       msg.MediaURL,
+		MediaType:      msg.MediaType,
+		SenderID:       c.UserID,
+		SenderUsername: senderUsername,
+	}
+	data, _ := json.Marshal(response)
+	c.Hub.SendToGroupMembers(msg.GroupID, -1, data)
+}
+
 func (c *Client) WritePump() {
-	defer c.Conn.Close()
-	for message := range c.Send {
-		c.Conn.WriteMessage(websocket.TextMessage, message)
+	ticker := time.NewTicker(54 * time.Second)
+	defer func() {
+		ticker.Stop()
+		c.Conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.Send:
+			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if !ok {
+				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+			c.Conn.WriteMessage(websocket.TextMessage, message)
+		case <-ticker.C:
+			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
 	}
 }

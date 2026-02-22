@@ -1,36 +1,58 @@
 package ws
 
-import "sync"
+import (
+	"database/sql"
+	"sync"
+)
 
-// Hub — это центр который хранит все подключения
-// Как коммутатор на телефонной станции
 type Hub struct {
-	clients map[int]*Client // userID -> клиент
-	mu      sync.RWMutex
+	Clients   map[int]*Client
+	mu        sync.RWMutex
+	DB        *sql.DB
 }
 
-var GlobalHub = &Hub{
-	clients: make(map[int]*Client),
+func NewHub(db *sql.DB) *Hub {
+	return &Hub{
+		Clients: make(map[int]*Client),
+		DB:      db,
+	}
 }
 
 func (h *Hub) Register(client *Client) {
 	h.mu.Lock()
-	h.clients[client.UserID] = client
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	h.Clients[client.UserID] = client
 }
 
 func (h *Hub) Unregister(client *Client) {
 	h.mu.Lock()
-	delete(h.clients, client.UserID)
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	delete(h.Clients, client.UserID)
 }
 
-// Отправить сообщение конкретному пользователю
-func (h *Hub) SendToUser(userID int, message []byte) {
+func (h *Hub) SendToUser(userID int, data []byte) {
 	h.mu.RLock()
-	client, ok := h.clients[userID]
-	h.mu.RUnlock()
-	if ok {
-		client.Send <- message
+	defer h.mu.RUnlock()
+	if client, ok := h.Clients[userID]; ok {
+		select {
+		case client.Send <- data:
+		default:
+		}
+	}
+}
+
+func (h *Hub) SendToGroupMembers(groupID int, excludeUserID int, data []byte) {
+	rows, err := h.DB.Query(
+		`SELECT user_id FROM group_members WHERE group_id = $1 AND user_id != $2`,
+		groupID, excludeUserID,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uid int
+		rows.Scan(&uid)
+		h.SendToUser(uid, data)
 	}
 }
