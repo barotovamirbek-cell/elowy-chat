@@ -8,6 +8,7 @@ import (
 	"github.com/joho/godotenv"
 
 	api "your_project/internal/api/http"
+	ws "your_project/internal/api/ws"
 	"your_project/internal/pkg/database"
 )
 
@@ -15,6 +16,9 @@ func main() {
 	godotenv.Load()
 
 	database.Connect()
+
+	// ФИX: инициализируем GlobalHub с подключением к БД
+	ws.InitHub(database.DB)
 
 	r := mux.NewRouter()
 

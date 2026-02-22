@@ -3,6 +3,8 @@ package ws
 import (
 	"database/sql"
 	"sync"
+
+	"github.com/gorilla/websocket"
 )
 
 type Hub struct {
@@ -11,9 +13,18 @@ type Hub struct {
 	DB      *sql.DB
 }
 
-// GlobalHub — глобальный экземпляр хаба
+// GlobalHub — глобальный экземпляр, инициализируется в main.go через InitHub
 var GlobalHub *Hub
 
+// InitHub — вызывается из main.go один раз при старте
+func InitHub(db *sql.DB) {
+	GlobalHub = &Hub{
+		Clients: make(map[int]*Client),
+		DB:      db,
+	}
+}
+
+// NewHub — если нужно создать отдельный хаб
 func NewHub(db *sql.DB) *Hub {
 	return &Hub{
 		Clients: make(map[int]*Client),
@@ -21,16 +32,21 @@ func NewHub(db *sql.DB) *Hub {
 	}
 }
 
-func NewClient(hub *Hub, conn interface{}, userID int, username string) *Client {
-	// conn передаётся как *websocket.Conn из handlers.go
-	// используем импорт gorilla/websocket внутри client.go
+// NewClientWithConn — создаёт клиента с websocket соединением
+func NewClientWithConn(hub *Hub, conn *websocket.Conn, userID int, username string) *Client {
 	return &Client{
 		UserID:   userID,
 		Username: username,
+		Conn:     conn,
 		Send:     make(chan []byte, 256),
 		Hub:      hub,
 		DB:       hub.DB,
 	}
+}
+
+// NewClient — алиас для обратной совместимости
+func NewClient(hub *Hub, conn *websocket.Conn, userID int, username string) *Client {
+	return NewClientWithConn(hub, conn, userID, username)
 }
 
 func (h *Hub) Register(client *Client) {

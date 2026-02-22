@@ -26,5 +26,9 @@ func RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/groups/members/add", AddGroupMember).Methods("POST")
 	r.HandleFunc("/api/groups/members/remove", RemoveGroupMember).Methods("POST")
 
+	// Настройки
+	r.HandleFunc("/api/settings/change-password", ChangePassword).Methods("POST")
+	r.HandleFunc("/api/settings/delete-account", DeleteAccount).Methods("DELETE")
+
 	r.HandleFunc("/ws", HandleWebSocket)
 }
