@@ -11,13 +11,25 @@ type Hub struct {
 	DB      *sql.DB
 }
 
+// GlobalHub — глобальный экземпляр хаба
 var GlobalHub *Hub
 
-// InitHub вызывается из main.go один раз при старте
-func InitHub(db *sql.DB) {
-	GlobalHub = &Hub{
+func NewHub(db *sql.DB) *Hub {
+	return &Hub{
 		Clients: make(map[int]*Client),
 		DB:      db,
+	}
+}
+
+func NewClient(hub *Hub, conn interface{}, userID int, username string) *Client {
+	// conn передаётся как *websocket.Conn из handlers.go
+	// используем импорт gorilla/websocket внутри client.go
+	return &Client{
+		UserID:   userID,
+		Username: username,
+		Send:     make(chan []byte, 256),
+		Hub:      hub,
+		DB:       hub.DB,
 	}
 }
 
