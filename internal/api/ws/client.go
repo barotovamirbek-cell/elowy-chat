@@ -71,7 +71,6 @@ func (c *Client) ReadPump() {
 func (c *Client) handlePersonalMessage(msg models.WSMessage) {
 	var senderUsername string
 	c.DB.QueryRow(`SELECT username FROM users WHERE id=$1`, c.UserID).Scan(&senderUsername)
-
 	_, err := c.DB.Exec(
 		`INSERT INTO messages (conversation_id, sender_id, content, media_url, media_type) VALUES ($1, $2, $3, $4, $5)`,
 		msg.ConversationID, c.UserID, msg.Content, msg.MediaURL, msg.MediaType,
@@ -80,22 +79,13 @@ func (c *Client) handlePersonalMessage(msg models.WSMessage) {
 		log.Println("Ошибка сохранения сообщения:", err)
 		return
 	}
-
 	response := models.WSMessage{
-		Type:           "message",
-		ConversationID: msg.ConversationID,
-		Content:        msg.Content,
-		MediaURL:       msg.MediaURL,
-		MediaType:      msg.MediaType,
-		SenderID:       c.UserID,
-		SenderUsername: senderUsername,
+		Type: "message", ConversationID: msg.ConversationID,
+		Content: msg.Content, MediaURL: msg.MediaURL, MediaType: msg.MediaType,
+		SenderID: c.UserID, SenderUsername: senderUsername,
 	}
 	data, _ := json.Marshal(response)
-
-	rows, err := c.DB.Query(
-		`SELECT user_id FROM conversation_members WHERE conversation_id=$1`,
-		msg.ConversationID,
-	)
+	rows, err := c.DB.Query(`SELECT user_id FROM conversation_members WHERE conversation_id=$1`, msg.ConversationID)
 	if err != nil {
 		return
 	}
@@ -110,7 +100,6 @@ func (c *Client) handlePersonalMessage(msg models.WSMessage) {
 func (c *Client) handleGroupMessage(msg models.WSMessage) {
 	var senderUsername string
 	c.DB.QueryRow(`SELECT username FROM users WHERE id=$1`, c.UserID).Scan(&senderUsername)
-
 	_, err := c.DB.Exec(
 		`INSERT INTO group_messages (group_id, sender_id, content, media_url, media_type) VALUES ($1, $2, $3, $4, $5)`,
 		msg.GroupID, c.UserID, msg.Content, msg.MediaURL, msg.MediaType,
@@ -119,15 +108,10 @@ func (c *Client) handleGroupMessage(msg models.WSMessage) {
 		log.Println("Ошибка сохранения группового сообщения:", err)
 		return
 	}
-
 	response := models.WSMessage{
-		Type:           "group_message",
-		GroupID:        msg.GroupID,
-		Content:        msg.Content,
-		MediaURL:       msg.MediaURL,
-		MediaType:      msg.MediaType,
-		SenderID:       c.UserID,
-		SenderUsername: senderUsername,
+		Type: "group_message", GroupID: msg.GroupID,
+		Content: msg.Content, MediaURL: msg.MediaURL, MediaType: msg.MediaType,
+		SenderID: c.UserID, SenderUsername: senderUsername,
 	}
 	data, _ := json.Marshal(response)
 	c.Hub.SendToGroupMembers(msg.GroupID, -1, data)
@@ -139,7 +123,6 @@ func (c *Client) WritePump() {
 		ticker.Stop()
 		c.Conn.Close()
 	}()
-
 	for {
 		select {
 		case message, ok := <-c.Send:
