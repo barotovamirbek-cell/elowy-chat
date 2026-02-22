@@ -19,6 +19,17 @@ type Client struct {
 	DB       *sql.DB
 }
 
+func NewClientWithConn(hub *Hub, conn *websocket.Conn, userID int, username string) *Client {
+	return &Client{
+		UserID:   userID,
+		Username: username,
+		Conn:     conn,
+		Send:     make(chan []byte, 256),
+		Hub:      hub,
+		DB:       hub.DB,
+	}
+}
+
 func (c *Client) ReadPump() {
 	defer func() {
 		c.Hub.Unregister(c)

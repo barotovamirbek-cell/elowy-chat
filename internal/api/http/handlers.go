@@ -190,7 +190,7 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := ws.NewClient(ws.GlobalHub, conn, userID, username)
+	client := ws.NewClientWithConn(ws.GlobalHub, conn, userID, username)
 	ws.GlobalHub.Register(client)
 
 	go client.WritePump()
