@@ -14,8 +14,14 @@ func RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/users", GetUsers).Methods("GET")
 	r.HandleFunc("/api/conversations", GetConversations).Methods("GET")
 	r.HandleFunc("/api/conversations/start", StartConversation).Methods("POST")
+	r.HandleFunc("/api/conversations/delete", DeleteConversation).Methods("DELETE")
 	r.HandleFunc("/api/messages", GetMessages).Methods("GET")
 	r.HandleFunc("/api/cloudinary/config", GetCloudinaryConfig).Methods("GET")
+
+	// Блокировка
+	r.HandleFunc("/api/users/block", BlockUser).Methods("POST")
+	r.HandleFunc("/api/users/unblock", UnblockUser).Methods("POST")
+	r.HandleFunc("/api/users/blocked", GetBlockedUsers).Methods("GET")
 
 	// Группы
 	r.HandleFunc("/api/groups", GetGroups).Methods("GET")
