@@ -27,16 +27,6 @@ func NewHub(db *sql.DB) *Hub {
 	}
 }
 
-func NewClientWithConn(hub *Hub, conn interface{}, userID int, username string) *Client {
-	return &Client{
-		UserID:   userID,
-		Username: username,
-		Send:     make(chan []byte, 256),
-		Hub:      hub,
-		DB:       hub.DB,
-	}
-}
-
 func (h *Hub) Register(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
