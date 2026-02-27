@@ -6,24 +6,22 @@ import (
 	"sync"
 )
 
-// Сигнальные сообщения для WebRTC
 type SignalMessage struct {
-	Type      string      `json:"type"`       // call_offer, call_answer, call_reject, call_end, ice_candidate
-	From      int         `json:"from"`
-	To        int         `json:"to"`         // для ЛС
-	GroupID   int         `json:"group_id"`   // для группы
-	RoomID    string      `json:"room_id"`
-	SDP       string      `json:"sdp"`
-	Candidate interface{} `json:"candidate"`
-	CallerName string     `json:"caller_name"`
+	Type       string      `json:"type"`
+	From       int         `json:"from"`
+	To         int         `json:"to"`
+	GroupID    int         `json:"group_id"`
+	RoomID     string      `json:"room_id"`
+	SDP        string      `json:"sdp"`
+	Candidate  interface{} `json:"candidate"`
+	CallerName string      `json:"caller_name"`
 }
 
-// Активные звонки
 type CallRoom struct {
-	RoomID      string
+	RoomID       string
 	Participants map[int]*Client
-	IsGroup     bool
-	mu          sync.Mutex
+	IsGroup      bool
+	mu           sync.Mutex
 }
 
 var (
@@ -38,9 +36,9 @@ func GetOrCreateRoom(roomID string, isGroup bool) *CallRoom {
 		return room
 	}
 	room := &CallRoom{
-		RoomID:      roomID,
+		RoomID:       roomID,
 		Participants: make(map[int]*Client),
-		IsGroup:     isGroup,
+		IsGroup:      isGroup,
 	}
 	callRooms[roomID] = room
 	return room
@@ -83,23 +81,25 @@ func HandleSignaling(hub *Hub, client *Client, signal SignalMessage) {
 
 	switch signal.Type {
 	case "call_offer":
-		// Личный звонок — отправляем получателю
+		// Личный звонок
 		if signal.To != 0 {
 			hub.SendToUser(signal.To, data)
 		}
-		// Групповой звонок — отправляем всем в группе
+		// Групповой звонок
 		if signal.GroupID != 0 {
-			roomID := signal.RoomID
-			room := GetOrCreateRoom(roomID, true)
+			room := GetOrCreateRoom(signal.RoomID, true)
 			room.AddParticipant(client)
-			// Отправляем всем участникам группы через БД
 			hub.SendToGroupMembers(signal.GroupID, client.UserID, data)
 		}
 
 	case "call_answer":
 		room := GetOrCreateRoom(signal.RoomID, signal.GroupID != 0)
 		room.AddParticipant(client)
-		hub.SendToUser(signal.From, data)
+		// signal.To = ID звонящего (кому отправить ответ)
+		// signal.From уже перезаписан на ID отвечающего в client.go
+		if signal.To != 0 {
+			hub.SendToUser(signal.To, data)
+		}
 
 	case "call_reject", "call_end":
 		if signal.To != 0 {

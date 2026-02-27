@@ -32,5 +32,6 @@ func RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/groups/members/add", AddGroupMember).Methods("POST")
 	r.HandleFunc("/api/groups/members/remove", RemoveGroupMember).Methods("POST")
 
+	r.HandleFunc("/api/fcm/token", SaveFcmToken).Methods("POST")
 	r.HandleFunc("/ws", HandleWebSocket)
 }

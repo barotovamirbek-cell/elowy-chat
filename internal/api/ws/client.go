@@ -94,6 +94,24 @@ func (c *Client) handlePersonalMessage(msg models.WSMessage) {
 		var uid int
 		rows.Scan(&uid)
 		c.Hub.SendToUser(uid, data)
+		// FCM если пользователь оффлайн
+		if uid != c.UserID {
+			c.Hub.mu.RLock()
+			_, online := c.Hub.Clients[uid]
+			c.Hub.mu.RUnlock()
+			if !online {
+				content := msg.Content
+				if content == "" {
+					content = "📎 Медиафайл"
+				}
+				SendFcmNotification(uid, map[string]string{
+					"type":    "message",
+					"sender":  senderUsername,
+					"content": content,
+					"id":      "1",
+				})
+			}
+		}
 	}
 }
 
@@ -115,6 +133,31 @@ func (c *Client) handleGroupMessage(msg models.WSMessage) {
 	}
 	data, _ := json.Marshal(response)
 	c.Hub.SendToGroupMembers(msg.GroupID, -1, data)
+	// FCM оффлайн участникам группы
+	rows2, err2 := c.DB.Query(`SELECT user_id FROM group_members WHERE group_id=$1 AND user_id!=$2`, msg.GroupID, c.UserID)
+	if err2 == nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var uid int
+			rows2.Scan(&uid)
+			c.Hub.mu.RLock()
+			_, online := c.Hub.Clients[uid]
+			c.Hub.mu.RUnlock()
+			if !online {
+				content := msg.Content
+				if content == "" {
+					content = "📎 Медиафайл"
+				}
+				SendFcmNotification(uid, map[string]string{
+					"type":       "group_message",
+					"sender":     senderUsername,
+					"content":    content,
+					"group_name": "Группа",
+					"id":         "2",
+				})
+			}
+		}
+	}
 }
 
 func (c *Client) WritePump() {
