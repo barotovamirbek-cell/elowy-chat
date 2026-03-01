@@ -48,19 +48,48 @@ func SendFcmNotification(toUserID int, data map[string]string) {
 		return
 	}
 
+	// Заголовок и тело для системного уведомления Android
+	title := data["sender"]
+	body := data["content"]
+	if title == "" {
+		title = "Новое сообщение"
+	}
+	if body == "" {
+		body = "📎 Медиафайл"
+	}
+	if data["type"] == "group_message" {
+		if data["group_name"] != "" {
+			title = data["group_name"]
+		}
+		if data["sender"] != "" {
+			body = data["sender"] + ": " + body
+		}
+	}
+
 	payload := map[string]interface{}{
 		"message": map[string]interface{}{
 			"token": fcmToken,
-			"data":  data,
+			// data — для Flutter обработчика
+			"data": data,
+			// notification — системное уведомление Android (показывается даже без Flutter)
+			"notification": map[string]string{
+				"title": title,
+				"body":  body,
+			},
 			"android": map[string]interface{}{
 				"priority": "high",
+				"notification": map[string]interface{}{
+					"channel_id":          "messages",
+					"notification_priority": "PRIORITY_MAX",
+					"sound":               "default",
+				},
 			},
 		},
 	}
 
-	body, _ := json.Marshal(payload)
+	bodyBytes, _ := json.Marshal(payload)
 	apiURL := fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", fcmProjectID)
-	req, err := http.NewRequestWithContext(context.Background(), "POST", apiURL, bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(context.Background(), "POST", apiURL, bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		return
 	}
@@ -82,7 +111,6 @@ func getFcmAccessToken() (string, error) {
 		return cachedFcmToken, nil
 	}
 
-	// Читаем весь Service Account JSON из переменной
 	saJSON := os.Getenv("FCM_SERVICE_ACCOUNT")
 	if saJSON == "" {
 		return "", fmt.Errorf("FCM_SERVICE_ACCOUNT not set")
