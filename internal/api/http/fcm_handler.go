@@ -1,13 +1,8 @@
 package http
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
-	"os"
 
 	"your_project/internal/pkg/database"
 )
