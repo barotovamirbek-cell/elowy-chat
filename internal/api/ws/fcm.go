@@ -79,15 +79,9 @@ func getFcmAccessToken() (string, error) {
 		return cachedFcmToken, nil
 	}
 
-	privateKeyPEM := os.Getenv("FCM_PRIVATE_KEY")
-	if privateKeyPEM == "" {
-		return "", fmt.Errorf("FCM_PRIVATE_KEY not set")
-	}
-	privateKeyPEM = strings.ReplaceAll(privateKeyPEM, `\n`, "\n")
-
-	rsaKey, err := parseRSAPrivateKey(privateKeyPEM)
+	rsaKey, err := loadPrivateKey()
 	if err != nil {
-		return "", fmt.Errorf("parse private key: %v", err)
+		return "", err
 	}
 
 	now := time.Now()
@@ -124,6 +118,90 @@ func getFcmAccessToken() (string, error) {
 	return token, nil
 }
 
+func loadPrivateKey() (*rsa.PrivateKey, error) {
+	raw := os.Getenv("FCM_PRIVATE_KEY")
+	if raw == "" {
+		return nil, fmt.Errorf("FCM_PRIVATE_KEY not set")
+	}
+
+	// Railway хранит \n как литерал — восстанавливаем переносы
+	raw = strings.ReplaceAll(raw, `\n`, "\n")
+
+	// Если нет заголовка PEM — оборачиваем
+	if !strings.Contains(raw, "-----BEGIN") {
+		raw = "-----BEGIN PRIVATE KEY-----\n" + raw + "\n-----END PRIVATE KEY-----\n"
+	}
+
+	// Убеждаемся что строки не длиннее 64 символов (требование PEM)
+	raw = normalizePEM(raw)
+
+	block, _ := pem.Decode([]byte(raw))
+	if block == nil {
+		// Пробуем base64 напрямую
+		return parseRawBase64Key(raw)
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("ParsePKCS8: %v", err)
+	}
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("not RSA key")
+	}
+	return rsaKey, nil
+}
+
+func normalizePEM(raw string) string {
+	lines := strings.Split(raw, "\n")
+	var result []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "-----") {
+			result = append(result, line)
+			continue
+		}
+		// Разбиваем длинные строки по 64 символа
+		for len(line) > 64 {
+			result = append(result, line[:64])
+			line = line[64:]
+		}
+		if len(line) > 0 {
+			result = append(result, line)
+		}
+	}
+	return strings.Join(result, "\n") + "\n"
+}
+
+func parseRawBase64Key(raw string) (*rsa.PrivateKey, error) {
+	// Убираем заголовки и пробелы
+	raw = strings.ReplaceAll(raw, "-----BEGIN PRIVATE KEY-----", "")
+	raw = strings.ReplaceAll(raw, "-----END PRIVATE KEY-----", "")
+	raw = strings.ReplaceAll(raw, "\n", "")
+	raw = strings.TrimSpace(raw)
+
+	der, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		der, err = base64.RawStdEncoding.DecodeString(raw)
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode: %v", err)
+		}
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("ParsePKCS8 from raw: %v", err)
+	}
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("not RSA key")
+	}
+	return rsaKey, nil
+}
+
 func buildJWT(claims map[string]interface{}, key *rsa.PrivateKey) (string, error) {
 	header := base64.RawURLEncoding.EncodeToString(mustMarshal(map[string]string{
 		"alg": "RS256",
@@ -139,22 +217,6 @@ func buildJWT(claims map[string]interface{}, key *rsa.PrivateKey) (string, error
 		return "", err
 	}
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig), nil
-}
-
-func parseRSAPrivateKey(pemStr string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemStr))
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM")
-	}
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	rsaKey, ok := key.(*rsa.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("not RSA key")
-	}
-	return rsaKey, nil
 }
 
 func mustMarshal(v interface{}) []byte {
