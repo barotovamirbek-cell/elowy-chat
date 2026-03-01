@@ -16,19 +16,22 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 )
 
 const (
-	fcmProjectID   = "elowy-chat"
-	fcmClientEmail = "firebase-adminsdk-fbsvc@elowy-chat.iam.gserviceaccount.com"
-	fcmTokenURL    = "https://oauth2.googleapis.com/token"
-	fcmScope       = "https://www.googleapis.com/auth/firebase.messaging"
+	fcmProjectID = "elowy-chat"
+	fcmTokenURL  = "https://oauth2.googleapis.com/token"
+	fcmScope     = "https://www.googleapis.com/auth/firebase.messaging"
 )
 
 var cachedFcmToken string
 var fcmTokenExpiry time.Time
+
+type serviceAccountJSON struct {
+	ClientEmail string `json:"client_email"`
+	PrivateKey  string `json:"private_key"`
+}
 
 func SendFcmNotification(toUserID int, data map[string]string) {
 	var fcmToken string
@@ -79,14 +82,33 @@ func getFcmAccessToken() (string, error) {
 		return cachedFcmToken, nil
 	}
 
-	rsaKey, err := loadPrivateKey()
+	// Читаем весь Service Account JSON из переменной
+	saJSON := os.Getenv("FCM_SERVICE_ACCOUNT")
+	if saJSON == "" {
+		return "", fmt.Errorf("FCM_SERVICE_ACCOUNT not set")
+	}
+
+	var sa serviceAccountJSON
+	if err := json.Unmarshal([]byte(saJSON), &sa); err != nil {
+		return "", fmt.Errorf("parse service account JSON: %v", err)
+	}
+
+	block, _ := pem.Decode([]byte(sa.PrivateKey))
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM from service account")
+	}
+	keyIface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse private key: %v", err)
+	}
+	rsaKey, ok := keyIface.(*rsa.PrivateKey)
+	if !ok {
+		return "", fmt.Errorf("not RSA key")
 	}
 
 	now := time.Now()
 	jwt, err := buildJWT(map[string]interface{}{
-		"iss":   fcmClientEmail,
+		"iss":   sa.ClientEmail,
 		"scope": fcmScope,
 		"aud":   fcmTokenURL,
 		"iat":   now.Unix(),
@@ -116,90 +138,6 @@ func getFcmAccessToken() (string, error) {
 	cachedFcmToken = token
 	fcmTokenExpiry = now.Add(55 * time.Minute)
 	return token, nil
-}
-
-func loadPrivateKey() (*rsa.PrivateKey, error) {
-	raw := os.Getenv("FCM_PRIVATE_KEY")
-	if raw == "" {
-		return nil, fmt.Errorf("FCM_PRIVATE_KEY not set")
-	}
-
-	// Railway хранит \n как литерал — восстанавливаем переносы
-	raw = strings.ReplaceAll(raw, `\n`, "\n")
-
-	// Если нет заголовка PEM — оборачиваем
-	if !strings.Contains(raw, "-----BEGIN") {
-		raw = "-----BEGIN PRIVATE KEY-----\n" + raw + "\n-----END PRIVATE KEY-----\n"
-	}
-
-	// Убеждаемся что строки не длиннее 64 символов (требование PEM)
-	raw = normalizePEM(raw)
-
-	block, _ := pem.Decode([]byte(raw))
-	if block == nil {
-		// Пробуем base64 напрямую
-		return parseRawBase64Key(raw)
-	}
-
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("ParsePKCS8: %v", err)
-	}
-	rsaKey, ok := key.(*rsa.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("not RSA key")
-	}
-	return rsaKey, nil
-}
-
-func normalizePEM(raw string) string {
-	lines := strings.Split(raw, "\n")
-	var result []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "-----") {
-			result = append(result, line)
-			continue
-		}
-		// Разбиваем длинные строки по 64 символа
-		for len(line) > 64 {
-			result = append(result, line[:64])
-			line = line[64:]
-		}
-		if len(line) > 0 {
-			result = append(result, line)
-		}
-	}
-	return strings.Join(result, "\n") + "\n"
-}
-
-func parseRawBase64Key(raw string) (*rsa.PrivateKey, error) {
-	// Убираем заголовки и пробелы
-	raw = strings.ReplaceAll(raw, "-----BEGIN PRIVATE KEY-----", "")
-	raw = strings.ReplaceAll(raw, "-----END PRIVATE KEY-----", "")
-	raw = strings.ReplaceAll(raw, "\n", "")
-	raw = strings.TrimSpace(raw)
-
-	der, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil {
-		der, err = base64.RawStdEncoding.DecodeString(raw)
-		if err != nil {
-			return nil, fmt.Errorf("base64 decode: %v", err)
-		}
-	}
-
-	key, err := x509.ParsePKCS8PrivateKey(der)
-	if err != nil {
-		return nil, fmt.Errorf("ParsePKCS8 from raw: %v", err)
-	}
-	rsaKey, ok := key.(*rsa.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("not RSA key")
-	}
-	return rsaKey, nil
 }
 
 func buildJWT(claims map[string]interface{}, key *rsa.PrivateKey) (string, error) {
